@@ -1,0 +1,803 @@
+#!/usr/bin/env python3
+import os
+import sys
+import json
+import logging
+import serial.tools.list_ports
+
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
+# Resolve project root and add to sys.path before importing core modules
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(script_dir, ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from core.bot import MeshBot, SafeStreamWrapper
+sys.stdout = SafeStreamWrapper(sys.stdout)
+sys.stderr = SafeStreamWrapper(sys.stderr)
+
+def run_config_wizard():
+    print("==================================================")
+    print("   MeshCore-bot Connection Configuration Wizard   ")
+    print("==================================================")
+    
+    # 1. Ask for connection type
+    print("Select Connection Type:")
+    print("1) Auto-discovery (Serial -> BLE -> TCP fallback) [Recommended]")
+    print("2) Serial")
+    print("3) BLE (Bluetooth Low Energy)")
+    print("4) TCP")
+    
+    choice = input("Enter choice [1-4, default 1]: ").strip()
+    if not choice:
+        conn_type = "auto"
+    elif choice == "1":
+        conn_type = "auto"
+    elif choice == "2":
+        conn_type = "serial"
+    elif choice == "3":
+        conn_type = "ble"
+    elif choice == "4":
+        conn_type = "tcp"
+    else:
+        print("Invalid choice, defaulting to 'auto'.")
+        conn_type = "auto"
+        
+    conn_config = {
+        "type": conn_type,
+        "address": "",
+        "port": "",
+        "baudrate": 115200,
+        "host": "127.0.0.1",
+        "tcpPort": 5000
+    }
+    
+    if conn_type == "serial":
+        ports = list(serial.tools.list_ports.comports())
+        if not ports:
+            print("No serial ports detected on the system.")
+            port_input = input("Enter serial port name (e.g. COM11 or /dev/ttyUSB0): ").strip()
+            conn_config["port"] = port_input
+        else:
+            print("\nAvailable Serial Ports:")
+            for i, p in enumerate(ports):
+                print(f"  {i + 1}) {p.device} - {p.description}")
+            port_choice = input(f"Select port [1-{len(ports)}]: ").strip()
+            if port_choice.isdigit() and 1 <= int(port_choice) <= len(ports):
+                conn_config["port"] = ports[int(port_choice) - 1].device
+            else:
+                print("Invalid port choice, please enter port name directly.")
+                port_input = input("Enter serial port name (e.g., COM11): ").strip()
+                conn_config["port"] = port_input
+        
+        baud = input("Enter baudrate [default 115200]: ").strip()
+        if baud.isdigit():
+            conn_config["baudrate"] = int(baud)
+            
+    elif conn_type == "ble":
+        print("Scanning BLE devices... (this may take a few seconds)")
+        try:
+            import asyncio
+            from bleak import BleakScanner
+            async def scan():
+                return await BleakScanner.discover(timeout=3.0)
+            
+            devices = asyncio.run(scan())
+            meshcore_devices = [d for d in devices if d.name and d.name.startswith("MeshCore-")]
+            
+            if not meshcore_devices:
+                print("No BLE devices starting with 'MeshCore-' detected.")
+                addr = input("Enter BLE Mac/UUID Address directly: ").strip()
+                conn_config["address"] = addr
+            else:
+                print("\nAvailable BLE Nodes:")
+                for i, d in enumerate(meshcore_devices):
+                    print(f"  {i + 1}) {d.name} ({d.address})")
+                ble_choice = input(f"Select node [1-{len(meshcore_devices)}]: ").strip()
+                if ble_choice.isdigit() and 1 <= int(ble_choice) <= len(meshcore_devices):
+                    conn_config["address"] = meshcore_devices[int(ble_choice) - 1].address
+                else:
+                    addr = input("Enter BLE Mac/UUID Address directly: ").strip()
+                    conn_config["address"] = addr
+        except ImportError:
+            print("bleak library not installed or not supported on this platform.")
+            addr = input("Enter BLE Mac/UUID Address: ").strip()
+            conn_config["address"] = addr
+        except Exception as e:
+            print(f"BLE Scan failed: {e}")
+            addr = input("Enter BLE Mac/UUID Address: ").strip()
+            conn_config["address"] = addr
+            
+    elif conn_type == "tcp":
+        host = input("Enter TCP host [default 127.0.0.1]: ").strip()
+        if host:
+            conn_config["host"] = host
+        port_num = input("Enter TCP port [default 5000]: ").strip()
+        if port_num.isdigit():
+            conn_config["tcpPort"] = int(port_num)
+            
+    # Load existing config to update
+    config_path = "config/config.json"
+    schema_path = "config/schema.json"
+    
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            try:
+                full_config = json.load(f)
+            except Exception:
+                full_config = {}
+    else:
+        full_config = {}
+        
+    full_config["connection"] = conn_config
+    if "core" not in full_config:
+        full_config["core"] = {
+            "timeSyncInterval": "0 0 * * *",
+            "shutdownTimeoutMs": 10000,
+            "ipcPort": 5002
+        }
+    else:
+        if "ipcPort" not in full_config["core"]:
+            full_config["core"]["ipcPort"] = 5002
+    if "modules" not in full_config:
+        full_config["modules"] = {}
+        
+    # Validate against schema
+    from core.validator import validate as validate_schema
+    if os.path.exists(schema_path):
+        with open(schema_path, 'r') as f:
+            schema = json.load(f)
+        errors = validate_schema(schema, full_config)
+        if errors:
+            print("\n[Error] Schema validation failed for the generated configuration:")
+            for err in errors:
+                print(f"  - {err}")
+            print("Changes were NOT saved.")
+            return
+            
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    with open(config_path, 'w') as f:
+        json.dump(full_config, f, indent=2)
+        
+    print(f"\nConfiguration successfully validated and written to '{config_path}'")
+
+def is_process_running(pid):
+    if sys.platform == "win32":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            exit_code = ctypes.c_ulong()
+            STILL_ACTIVE = 259
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                is_active = (exit_code.value == STILL_ACTIVE)
+                kernel32.CloseHandle(handle)
+                return is_active
+            kernel32.CloseHandle(handle)
+            return True
+        return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+def run_status():
+    # If Linux and systemd service exists, delegate to systemctl status
+    if sys.platform != "win32" and os.path.exists("/etc/systemd/system/meshcore-bot.service"):
+        import subprocess
+        print("Checking systemd service status...")
+        subprocess.run(["sudo", "systemctl", "status", "meshcore-bot"])
+        return
+
+    config_path = "config/config.json"
+    pid_path = "config/meshbot.pid"
+    
+    print("==================================================")
+    print("           MeshCore-bot Daemon Status             ")
+    print("==================================================")
+    
+    # Check if running
+    running = False
+    pid = None
+    if os.path.exists(pid_path):
+        try:
+            with open(pid_path, 'r') as f:
+                pid = int(f.read().strip())
+            
+            running = is_process_running(pid)
+        except Exception:
+            running = False
+            
+    if running:
+        print(f"Status: RUNNING (PID: {pid})")
+    else:
+        print("Status: STOPPED")
+        
+    # Print configuration summary
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                cfg = json.load(f)
+            conn = cfg.get("connection", {})
+            print("\nCurrent Configuration:")
+            print(f"  Type:     {conn.get('type')}")
+            if conn.get('type') == 'serial':
+                print(f"  Port:     {conn.get('port')}")
+                print(f"  Baudrate: {conn.get('baudrate')}")
+            elif conn.get('type') == 'ble':
+                print(f"  Address:  {conn.get('address')}")
+            elif conn.get('type') == 'tcp':
+                print(f"  Host:     {conn.get('host')}")
+                print(f"  Port:     {conn.get('tcpPort')}")
+            elif conn.get('type') == 'auto':
+                print(f"  Fallback: BLE Addr: '{conn.get('address')}', TCP Host: '{conn.get('host')}:{conn.get('tcpPort')}'")
+                
+            core = cfg.get("core", {})
+            print(f"  Time Sync Interval: {core.get('timeSyncInterval')}")
+            
+            modules = cfg.get("modules", {})
+            enabled_mods = [name for name, mod in modules.items() if mod.get("enabled")]
+            print(f"  Enabled Modules:    {', '.join(enabled_mods) if enabled_mods else 'None'}")
+        except Exception as e:
+            print(f"\nCould not read configuration: {e}")
+    else:
+        print("\nNo config.json found.")
+
+def run_stop():
+    pid_path = "config/meshbot.pid"
+    
+    # If Linux and systemd service exists, stop it via systemd
+    if sys.platform != "win32" and os.path.exists("/etc/systemd/system/meshcore-bot.service"):
+        import subprocess
+        print("Stopping systemd service...")
+        res = subprocess.run(["sudo", "systemctl", "stop", "meshcore-bot"])
+        return res.returncode == 0
+        
+    if not os.path.exists(pid_path):
+        print("No PID file found. Daemon is likely stopped.")
+        return True
+        
+    try:
+        with open(pid_path, 'r') as f:
+            pid = int(f.read().strip())
+    except Exception:
+        print("Could not read PID file.")
+        return False
+        
+    import signal
+    if not is_process_running(pid):
+        print(f"Process with PID {pid} is not running. Cleaning up PID file.")
+        try:
+            os.remove(pid_path)
+        except Exception:
+            pass
+        return True
+        
+    print(f"Stopping daemon (PID {pid})...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+        # Wait up to 10 seconds for process to exit
+        for _ in range(20):
+            import time
+            time.sleep(0.5)
+            if not is_process_running(pid):
+                print("Daemon stopped successfully.")
+                if os.path.exists(pid_path):
+                    try:
+                        os.remove(pid_path)
+                    except Exception:
+                        pass
+                return True
+        print("Daemon did not stop in time. Force killing...")
+        try:
+            if sys.platform != "win32":
+                os.kill(pid, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        if os.path.exists(pid_path):
+            try:
+                os.remove(pid_path)
+            except Exception:
+                pass
+        return True
+    except Exception as e:
+        print(f"Failed to stop daemon: {e}")
+        return False
+
+def run_restart():
+    # If Linux and systemd service exists, restart it via systemd
+    if sys.platform != "win32" and os.path.exists("/etc/systemd/system/meshcore-bot.service"):
+        import subprocess
+        print("Restarting systemd service...")
+        subprocess.run(["sudo", "systemctl", "restart", "meshcore-bot"])
+        return
+        
+    print("Restarting daemon...")
+    run_stop()
+    
+    # Spawn a new process running meshbot start in the background
+    import subprocess
+    script_path = os.path.abspath(__file__)
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(
+                [sys.executable, script_path, "start"],
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+                close_fds=True
+            )
+        else:
+            subprocess.Popen(
+                [sys.executable, script_path, "start"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setpgrp,
+                close_fds=True
+            )
+        print("Daemon restarted successfully in the background.")
+    except Exception as e:
+        print(f"Failed to spawn daemon: {e}")
+
+def run_logs():
+    # If Linux and systemd service exists, use journalctl
+    if sys.platform != "win32" and os.path.exists("/etc/systemd/system/meshcore-bot.service"):
+        import subprocess
+        print("Streaming systemd service logs (Press Ctrl+C to exit)...")
+        try:
+            subprocess.run(["journalctl", "-u", "meshcore-bot", "-f"])
+        except KeyboardInterrupt:
+            pass
+        return
+        
+    log_path = "config/meshbot.log"
+    if not os.path.exists(log_path):
+        print(f"No log file found at {log_path}.")
+        return
+        
+    print(f"Streaming logs from {log_path} (Press Ctrl+C to exit)...")
+    try:
+        with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+            # Go to the end of the file
+            f.seek(0, 2)
+            end_pos = f.tell()
+            # Read last 4KB to display recent lines
+            f.seek(max(0, end_pos - 4096))
+            lines = f.readlines()
+            for line in lines[-50:]:
+                print(line, end='')
+                
+            # Follow loop
+            import time
+            while True:
+                line = f.readline()
+                if not line:
+                    time.sleep(0.1)
+                    continue
+                print(line, end='')
+    except KeyboardInterrupt:
+        print("\nExited log streaming.")
+
+def run_modules():
+    config_path = "config/config.json"
+    modules_dir = "modules"
+    
+    print("==================================================")
+    print("           MeshCore-bot Modules List              ")
+    print("==================================================")
+    
+    # 1. Load enabled state from config.json
+    enabled_mods = set()
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                cfg = json.load(f)
+            modules_cfg = cfg.get("modules", {})
+            for name, mod in modules_cfg.items():
+                if mod.get("enabled"):
+                    enabled_mods.add(name)
+        except Exception:
+            pass
+            
+    # 2. Scan modules folder
+    if not os.path.exists(modules_dir):
+        print(f"Modules directory not found: {modules_dir}")
+        return
+        
+    modules = []
+    for file in os.listdir(modules_dir):
+        if file.endswith('.py') and file != '__init__.py' and file != 'template.py':
+            name = os.path.splitext(file)[0]
+            status = "ENABLED" if name in enabled_mods else "DISABLED"
+            modules.append((name, status))
+            
+    if not modules:
+        print("No modules found in modules/ directory.")
+    else:
+        print(f"{'Module Name':<25} | {'Status':<10}")
+        print("-" * 50)
+        for name, status in sorted(modules):
+            print(f"{name:<25} | {status:<10}")
+
+def start_daemon_process():
+    import subprocess
+    script_path = os.path.abspath(__file__)
+    log_path = os.path.abspath("config/meshbot_bootstrap.log")
+    try:
+        f = open(log_path, "w", encoding="utf-8")
+        if sys.platform == "win32":
+            subprocess.Popen(
+                [sys.executable, script_path, "start"],
+                stdout=f,
+                stderr=f,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008, # DETACHED_PROCESS
+                close_fds=False
+            )
+        else:
+            subprocess.Popen(
+                [sys.executable, script_path, "start"],
+                stdout=f,
+                stderr=f,
+                preexec_fn=os.setpgrp,
+                close_fds=True
+            )
+        return True
+    except Exception as e:
+        print(f"Failed to spawn daemon process: {e}")
+        return False
+
+def print_cli_options():
+    print("Usage: meshbot cli <command> [args...]")
+    print()
+    print("Available CLI commands:")
+    print("  infos, i, query, q, ver           - Print node information (firmware ver, model)")
+    print("  self_telemetry, t                 - Print own telemetry details")
+    print("  reboot                            - Reboot the node")
+    print("  clock                             - Print current device time")
+    print("  clock sync                        - Sync device clock with host system time")
+    print("  msg, m <name> <message>           - Send private message to a contact by name")
+    print("  chan, ch <index_or_name> <msg>    - Send message to a channel by index or name")
+    print("  channels, chans, get_channels     - Print all channel information")
+    print("  set_channel <idx_or_nm> <nm> [k]  - Set/add channel info (nb, name, key_hex)")
+    print("  remove_channel <idx_or_name>      - Remove channel (by index or name)")
+    print("  set <setting> <value>             - Set setting (name, tx_power, pin, radio)")
+    print("  contacts, list, lc [-pub]         - Get persistent contact list")
+    print("  reload_contacts, rc               - Force reloading all contacts from node")
+
+def run_cli_cmd(cmds):
+    if not cmds:
+        print("Error: No CLI command specified.")
+        print_cli_options()
+        return
+        
+    config_path = "config/config.json"
+    pid_path = "config/meshbot.pid"
+    
+    # Check for -pub / --pub flags and strip them for contacts commands
+    show_pub = False
+    if cmds:
+        has_contacts = any(token.lower() in ("contacts", "list", "lc", "reload_contacts", "rc") for token in cmds)
+        if has_contacts:
+            if "-pub" in cmds:
+                show_pub = True
+                cmds = [x for x in cmds if x != "-pub"]
+            if "--pub" in cmds:
+                show_pub = True
+                cmds = [x for x in cmds if x != "--pub"]
+
+    # Validate CLI command formatting client-side
+    cmd_name = cmds[0].lower()
+    if cmd_name in ("msg", "m"):
+        if len(cmds) < 3:
+            print("Error: Missing arguments for msg command.")
+            print("Usage: meshbot cli msg <recipient_name> <message>")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name in ("chan", "ch"):
+        if len(cmds) < 3:
+            print("Error: Missing arguments for chan command.")
+            print("Usage: meshbot cli chan <channel_idx_or_name> <message>")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name == "set":
+        if len(cmds) < 3:
+            print("Error: Missing arguments for set command.")
+            print("Usage: meshbot cli set <setting> <value>")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name == "set_channel":
+        if len(cmds) < 3:
+            print("Error: Missing arguments for set_channel command.")
+            print("Usage: meshbot cli set_channel <idx_or_name> <name> [key_hex]")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name == "add_channel":
+        if len(cmds) < 2:
+            print("Error: Missing arguments for add_channel command.")
+            print("Usage: meshbot cli add_channel <name> [key_hex]")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name == "remove_channel":
+        if len(cmds) < 2:
+            print("Error: Missing arguments for remove_channel command.")
+            print("Usage: meshbot cli remove_channel <idx_or_name>")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name in ("infos", "i", "query", "q", "ver", "reboot", "self_telemetry", "t", "reload_contacts", "rc"):
+        if len(cmds) > 1:
+            print(f"Error: Command '{cmds[0]}' does not accept extra arguments.")
+            print(f"Usage: meshbot cli {cmds[0]}")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name in ("contacts", "list", "lc"):
+        if len(cmds) > 1:
+            print(f"Error: Command '{cmds[0]}' only accepts the optional -pub flag.")
+            print(f"Usage: meshbot cli {cmds[0]} [-pub]")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name == "clock":
+        if len(cmds) > 2 or (len(cmds) == 2 and cmds[1].lower() != "sync"):
+            print("Error: Invalid arguments for clock command.")
+            print("Usage: meshbot cli clock [sync]")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name in ("channels", "chans", "get_channels"):
+        if len(cmds) > 1:
+            print(f"Error: Command '{cmds[0]}' does not accept extra arguments.")
+            print(f"Usage: meshbot cli {cmds[0]}")
+            print()
+            print_cli_options()
+            return
+    elif cmd_name not in (
+        "infos", "i", "query", "q", "ver", "reboot", "self_telemetry", "t",
+        "clock", "msg", "m", "chan", "ch", "channels", "chans", "get_channels",
+        "set_channel", "add_channel", "remove_channel", "set",
+        "contacts", "list", "lc", "reload_contacts", "rc"
+    ):
+        print(f"Error: Unrecognized CLI command '{cmds[0]}'.")
+        print_cli_options()
+        return
+
+    # 1. Check if daemon is running
+    running = False
+    if os.path.exists(pid_path):
+        try:
+            with open(pid_path, 'r') as f:
+                pid = int(f.read().strip())
+            running = is_process_running(pid)
+        except Exception:
+            pass
+            
+    if not running:
+        print("Daemon is not running. Starting MeshCore-bot daemon in the background...")
+        if not start_daemon_process():
+            print("Error: Could not start the daemon process.")
+            return
+
+    # 2. Connect/poll daemon IPC server
+    import socket
+    import time
+    
+    ipc_port = 5002
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                cfg = json.load(f)
+            ipc_port = cfg.get("core", {}).get("ipcPort", 5002)
+        except Exception:
+            pass
+
+    connected = False
+    start_time = time.time()
+    timeout = 10.0 # wait up to 10 seconds for the daemon to start and initialize
+    
+    s = None
+    while time.time() - start_time < timeout:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect(('127.0.0.1', ipc_port))
+            connected = True
+            break
+        except Exception:
+            if s:
+                s.close()
+            time.sleep(0.25)
+            
+    if not connected:
+        print(f"Error: Could not connect to daemon IPC server on port {ipc_port} after {timeout} seconds.")
+        print("Please check the logs in config/meshbot.log for connection or configuration errors.")
+        return
+
+    try:
+        s.settimeout(60.0)
+        payload = json.dumps({"command": cmds}).encode('utf-8')
+        s.sendall(payload)
+        s.shutdown(socket.SHUT_WR)
+        
+        response_data = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            response_data += chunk
+        s.close()
+        
+        if response_data:
+            res = json.loads(response_data.decode('utf-8'))
+            if isinstance(res, dict) and "error" in res:
+                print(f"Error: {res['error']}")
+                err_msg = res["error"].lower()
+                if "usage:" in err_msg or "unsupported command" in err_msg or "invalid" in err_msg or "missing" in err_msg:
+                    print()
+                    print_cli_options()
+            elif cmds and cmds[0].lower() in ("contacts", "list", "lc", "reload_contacts", "rc") and isinstance(res, dict):
+                type_map = {
+                    1: "Companion",
+                    2: "Repeater",
+                    3: "Room Server",
+                    4: "Sensor"
+                }
+                if show_pub:
+                    print(f"{'Contact Name':<30} | {'Type':<15} | {'Public Key'}")
+                    print("-" * 115)
+                else:
+                    print(f"{'Contact Name':<30} | {'Type':<15}")
+                    print("-" * 50)
+                sorted_contacts = sorted(res.values(), key=lambda x: x.get("adv_name", "").lower())
+                for c in sorted_contacts:
+                    name = c.get("adv_name") or c.get("name") or "Unknown"
+                    t_val = c.get("type", 1)
+                    t_str = type_map.get(t_val, f"Unknown ({t_val})")
+                    if show_pub:
+                        pubkey = c.get("public_key") or "N/A"
+                        print(f"{name:<30} | {t_str:<15} | {pubkey}")
+                    else:
+                        print(f"{name:<30} | {t_str:<15}")
+            else:
+                if isinstance(res, (dict, list)):
+                    print(json.dumps(res, indent=2))
+                else:
+                    print(res)
+        else:
+            print("Error: Received empty response from daemon.")
+    except Exception as e:
+        print(f"Error executing command via daemon IPC: {e}")
+
+def print_main_help():
+    print("Usage: meshbot [start|stop|restart|config|status|logs|modules|cli]")
+    print("  start         - Start the daemon (runs systemd service on Linux, foreground on Windows)")
+    print("  start-daemon  - Run the bot daemon process in the foreground (used by systemd)")
+    print("  stop          - Stop the running daemon")
+    print("  restart       - Restart the daemon")
+    print("  config        - Interactive terminal configuration wizard")
+    print("  status        - Print bot status and connection info")
+    print("  logs          - Stream/view troubleshooting logs (calls journalctl on Linux)")
+    print("  modules       - List all available modules in modules/ and their status")
+    print("  cli           - Run a direct CLI command on the hardware (e.g., meshbot cli set name MyNode)")
+
+def main():
+    args = sys.argv[1:]
+    
+    # Normalize paths so we look in the project workspace
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(script_dir, ".."))
+    os.chdir(project_root)
+    
+    if not args:
+        cmd = "help"
+    else:
+        cmd = args[0]
+        
+    if cmd == "start-daemon":
+        if len(args) > 1:
+            print("Error: Command 'start-daemon' does not accept arguments.")
+            print("Usage: meshbot start-daemon")
+            print()
+            print_main_help()
+            sys.exit(1)
+        bot = MeshBot()
+        success = bot.run()
+        sys.exit(0 if success else 1)
+    elif cmd == "start":
+        if len(args) > 1:
+            print("Error: Command 'start' does not accept arguments.")
+            print("Usage: meshbot start")
+            print()
+            print_main_help()
+            sys.exit(1)
+        if sys.platform != "win32" and os.path.exists("/etc/systemd/system/meshcore-bot.service"):
+            import subprocess
+            print("Starting systemd service...")
+            res = subprocess.run(["sudo", "systemctl", "start", "meshcore-bot"])
+            sys.exit(res.returncode)
+        else:
+            bot = MeshBot()
+            success = bot.run()
+            sys.exit(0 if success else 1)
+    elif cmd == "stop":
+        if len(args) > 1:
+            print("Error: Command 'stop' does not accept arguments.")
+            print("Usage: meshbot stop")
+            print()
+            print_main_help()
+            sys.exit(1)
+        success = run_stop()
+        sys.exit(0 if success else 1)
+    elif cmd == "restart":
+        if len(args) > 1:
+            print("Error: Command 'restart' does not accept arguments.")
+            print("Usage: meshbot restart")
+            print()
+            print_main_help()
+            sys.exit(1)
+        run_restart()
+        sys.exit(0)
+    elif cmd == "config":
+        if len(args) > 1:
+            print("Error: Command 'config' does not accept arguments.")
+            print("Usage: meshbot config")
+            print()
+            print_main_help()
+            sys.exit(1)
+        run_config_wizard()
+        sys.exit(0)
+    elif cmd == "status":
+        if len(args) > 1:
+            print("Error: Command 'status' does not accept arguments.")
+            print("Usage: meshbot status")
+            print()
+            print_main_help()
+            sys.exit(1)
+        run_status()
+        sys.exit(0)
+    elif cmd == "logs":
+        if len(args) > 1:
+            print("Error: Command 'logs' does not accept arguments.")
+            print("Usage: meshbot logs")
+            print()
+            print_main_help()
+            sys.exit(1)
+        run_logs()
+        sys.exit(0)
+    elif cmd == "modules":
+        if len(args) > 1:
+            print("Error: Command 'modules' does not accept arguments.")
+            print("Usage: meshbot modules")
+            print()
+            print_main_help()
+            sys.exit(1)
+        run_modules()
+        sys.exit(0)
+    elif cmd == "cli":
+        run_cli_cmd(args[1:])
+        sys.exit(0)
+    elif cmd in ("--help", "-h", "help"):
+        print_main_help()
+        sys.exit(0)
+    else:
+        print(f"Unknown command: {cmd}")
+        print_main_help()
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

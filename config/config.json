@@ -1,0 +1,22 @@
+{
+  "connection": {
+    "type": "auto",
+    "address": "",
+    "port": "",
+    "baudrate": 115200,
+    "host": "127.0.0.1",
+    "tcpPort": 5000
+  },
+  "core": {
+    "timeSyncInterval": "0 0 * * *",
+    "shutdownTimeoutMs": 10000,
+    "ipcPort": 5002
+  },
+  "modules": {
+    "template": {
+      "enabled": true,
+      "messagePrefix": "[MeshBot]",
+      "logChannel": 0
+    }
+  }
+}
