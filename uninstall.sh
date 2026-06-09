@@ -34,30 +34,56 @@ if [ -f "$WRAPPER_PATH" ]; then
 fi
 
 # 4. Remove project virtual environment
-REPO_DIR=$(pwd)
-VENV_DIR="${REPO_DIR}/venv"
-if [ -d "$VENV_DIR" ]; then
-  echo "[Uninstall] Removing python virtual environment..."
-  rm -rf "$VENV_DIR"
+# Detect repository directory
+if [ -f "bin/meshbot" ] && [ -d "core" ]; then
+  REPO_DIR=$(pwd)
+elif [ -d "${HOME}/Meshcore-bot" ] && [ -f "${HOME}/Meshcore-bot/bin/meshbot" ]; then
+  REPO_DIR="${HOME}/Meshcore-bot"
+else
+  REPO_DIR=""
+fi
+
+if [ -n "$REPO_DIR" ]; then
+  VENV_DIR="${REPO_DIR}/venv"
+  if [ -d "$VENV_DIR" ]; then
+    echo "[Uninstall] Removing python virtual environment..."
+    rm -rf "$VENV_DIR"
+  fi
 fi
 
 # 5. Clean up process lockfiles
-PID_FILE="${REPO_DIR}/config/meshbot.pid"
-if [ -f "$PID_FILE" ]; then
-  echo "[Uninstall] Cleaning process lockfiles..."
-  rm -f "$PID_FILE"
+if [ -n "$REPO_DIR" ]; then
+  PID_FILE="${REPO_DIR}/config/meshbot.pid"
+  if [ -f "$PID_FILE" ]; then
+    echo "[Uninstall] Cleaning process lockfiles..."
+    rm -f "$PID_FILE"
+  fi
 fi
 
 # 6. Prompt to clean up configurations
-echo "--------------------------------------------------"
-read -p "Do you want to clean up your config.json and bot configurations? [y/N]: " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-  echo "[Uninstall] Cleaning up configurations..."
-  rm -f "${REPO_DIR}/config/config.json"
-  echo "Configuration files removed."
-else
-  echo "[Uninstall] Configuration files preserved."
+if [ -n "$REPO_DIR" ]; then
+  echo "--------------------------------------------------"
+  read -p "Do you want to clean up your config.json and bot configurations? [y/N]: " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo "[Uninstall] Cleaning up configurations..."
+    rm -f "${REPO_DIR}/config/config.json"
+    echo "Configuration files removed."
+  else
+    echo "[Uninstall] Configuration files preserved."
+  fi
+fi
+
+# 7. Optionally remove repo directory itself
+if [ -n "$REPO_DIR" ] && [ "$REPO_DIR" = "${HOME}/Meshcore-bot" ]; then
+  echo "--------------------------------------------------"
+  read -p "Do you want to completely remove the repository directory ${REPO_DIR}? [y/N]: " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo "[Uninstall] Removing repository directory..."
+    rm -rf "$REPO_DIR"
+    echo "Repository directory removed."
+  fi
 fi
 
 echo "=================================================="

@@ -56,7 +56,24 @@ else
 fi
 
 # 3. Setup Project Virtual Environment
-REPO_DIR=$(pwd)
+# Detect repository directory
+if [ -f "bin/meshbot" ] && [ -d "core" ]; then
+  REPO_DIR=$(pwd)
+else
+  echo "[Install] Standalone execution detected (not running in repository directory)."
+  INSTALL_DIR="${HOME}/Meshcore-bot"
+  if [ -d "$INSTALL_DIR" ]; then
+    echo "[Install] Existing directory found at ${INSTALL_DIR}. Updating repository..."
+    cd "$INSTALL_DIR"
+    git pull
+  else
+    echo "[Install] Cloning MeshCore-bot repository into ${INSTALL_DIR}..."
+    git clone https://github.com/Dhovin/Meshcore-bot.git "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+  fi
+  REPO_DIR=$(pwd)
+fi
+
 VENV_DIR="${REPO_DIR}/venv"
 
 echo "[Install] Creating Python virtual environment in ${VENV_DIR}..."

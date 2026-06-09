@@ -72,10 +72,30 @@ python -m unittest discover -s tests -p "*.py"
 
 ### Linux Deployment
 
-Run the system installation script. This script verifies all prerequisites, initializes a dedicated self-contained python virtual environment (`venv`), installs dependencies (`pyserial`, `bleak`, `meshcore`), configures a global shell command wrapper `/usr/local/bin/meshbot`, and registers/starts the systemd service:
+#### Quick One-Liner Installation & Uninstall
+
+To automatically download the code, clone it into your home directory (`~/Meshcore-bot`), set up the service, dependencies, virtual environment, and install the global `meshbot` CLI command with a single line:
+```bash
+curl -sSL https://raw.githubusercontent.com/Dhovin/Meshcore-bot/master/install.sh | bash
+```
+
+To completely stop services, wipe configuration and databases, and clean up the system-wide installation wrapper:
+```bash
+curl -sSL https://raw.githubusercontent.com/Dhovin/Meshcore-bot/master/uninstall.sh | bash
+```
+
+#### Manual Installation
+
+Alternatively, if you already cloned the repository manually, you can execute the installer inside the repository directory:
 ```bash
 chmod +x install.sh
 ./install.sh
+```
+
+To uninstall manually from within the repository directory:
+```bash
+chmod +x uninstall.sh
+./uninstall.sh
 ```
 
 ---
