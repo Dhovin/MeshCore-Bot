@@ -239,5 +239,75 @@ class TestValidator(unittest.TestCase):
         errors = validate_schema(schema, data)
         self.assertEqual(errors, ["Path 'key_b' is required"])
 
+class TestModuleAPIRequestChannel(unittest.TestCase):
+    def test_request_channel_exists(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from core.module_manager import ModuleAPI
+            from unittest.mock import MagicMock, AsyncMock
+            
+            bot = MagicMock()
+            bot.connection_manager.isConnected = True
+            
+            # Mock execute to return existing channels list
+            existing_channels = [
+                {"channel_idx": 0, "channel_name": "primary"},
+                {"channel_idx": 1, "channel_name": "weather"},
+                {"channel_idx": 2, "channel_name": ""}
+            ]
+            bot.connection_manager.execute = AsyncMock(return_value=existing_channels)
+            
+            api = ModuleAPI("test_module", bot)
+            
+            async def run_test():
+                idx = await api.request_channel("weather")
+                self.assertEqual(idx, 1)
+                bot.connection_manager.execute.assert_called_with("channels")
+                self.assertEqual(bot.connection_manager.execute.call_count, 1)
+                
+            loop.run_until_complete(run_test())
+        finally:
+            loop.close()
+
+    def test_request_channel_not_exists_adds_it(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from core.module_manager import ModuleAPI
+            from unittest.mock import MagicMock, AsyncMock
+            
+            bot = MagicMock()
+            bot.connection_manager.isConnected = True
+            
+            # Mock execute to return channel lists and set_channel result
+            existing_channels = [
+                {"channel_idx": 0, "channel_name": "primary"},
+                {"channel_idx": 1, "channel_name": ""}, # empty slot
+                {"channel_idx": 2, "channel_name": ""}
+            ]
+            
+            async def mock_execute(cmd):
+                if cmd == "channels":
+                    return existing_channels
+                elif isinstance(cmd, list) and cmd[0] == "set_channel":
+                    idx = int(cmd[1])
+                    existing_channels[idx]["channel_name"] = cmd[2]
+                    return existing_channels[idx]
+                return None
+                
+            bot.connection_manager.execute = AsyncMock(side_effect=mock_execute)
+            
+            api = ModuleAPI("test_module", bot)
+            
+            async def run_test():
+                idx = await api.request_channel("weather")
+                self.assertEqual(idx, 1)
+                bot.connection_manager.execute.assert_any_call(["set_channel", "1", "weather"])
+                
+            loop.run_until_complete(run_test())
+        finally:
+            loop.close()
+
 if __name__ == '__main__':
     unittest.main()

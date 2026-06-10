@@ -32,6 +32,57 @@ class ModuleAPI:
         """Schedule a task on the central task scheduler."""
         return self.bot.scheduler.schedule(cron_expression, callback, self.module_name)
 
+    async def request_channel(self, channel_name):
+        """
+        Request a channel by name. If it does not exist on the node,
+        automatically add/create it. Returns the channel index.
+        """
+        if not channel_name:
+            return 0
+            
+        # If it's already an integer index
+        if isinstance(channel_name, int):
+            return channel_name
+        if isinstance(channel_name, str) and channel_name.isdigit():
+            return int(channel_name)
+            
+        # Ensure connection
+        if not self.bot.connection_manager.isConnected or not self.bot.connection_manager.mc:
+            logger.warning(f"Device not connected. Cannot request channel '{channel_name}'. Returning default index 0.")
+            return 0
+            
+        # 1. Fetch channel list
+        channels = await self.bot.connection_manager.execute("channels")
+        if not isinstance(channels, list):
+            logger.error(f"Failed to fetch channels list: {channels}")
+            return 0
+            
+        # 2. Check if the channel already exists
+        for ch in channels:
+            if ch and ch.get("channel_name") == channel_name:
+                return ch.get("channel_idx", 0)
+                
+        # 3. Channel does not exist, find first empty channel slot
+        empty_idx = None
+        for ch in channels:
+            if ch and ch.get("channel_name") == "":
+                empty_idx = ch.get("channel_idx")
+                break
+                
+        if empty_idx is None:
+            logger.error(f"No available empty channel slot to add '{channel_name}'")
+            return 0
+            
+        # 4. Add/set the channel at the empty slot index
+        logger.info(f"Channel '{channel_name}' requested by module '{self.module_name}' does not exist. Adding it at index {empty_idx}...")
+        res = await self.bot.connection_manager.execute(["set_channel", str(empty_idx), channel_name])
+        if isinstance(res, dict) and "error" in res:
+            logger.error(f"Failed to create channel '{channel_name}': {res['error']}")
+            return 0
+            
+        logger.info(f"Successfully added channel '{channel_name}' at index {empty_idx}")
+        return empty_idx
+
     def _sanitize_command(self, cmd):
         if not isinstance(cmd, str):
             raise ValueError("Command must be a string")
