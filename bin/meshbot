@@ -23,12 +23,134 @@ from core.bot import MeshBot, SafeStreamWrapper
 sys.stdout = SafeStreamWrapper(sys.stdout)
 sys.stderr = SafeStreamWrapper(sys.stderr)
 
-def run_config_wizard():
-    print("==================================================")
-    print("   MeshCore-bot Connection Configuration Wizard   ")
-    print("==================================================")
+def load_module_schemas():
+    import importlib.util
+    modules_dir = "modules"
+    resolved_base = os.path.abspath(modules_dir)
+    schemas = {}
+    if not os.path.exists(resolved_base):
+        return schemas
+
+    for file in os.listdir(resolved_base):
+        if not file.endswith('.py') or file == '__init__.py' or file == 'template.py':
+            continue
+        full_path = os.path.abspath(os.path.join(resolved_base, file))
+        module_name = os.path.splitext(file)[0]
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, full_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            class_name = ''.join(x.title() for x in module_name.split('_'))
+            ModuleClass = getattr(module, class_name, None)
+            if not ModuleClass:
+                ModuleClass = getattr(module, 'Module', None)
+            if ModuleClass:
+                instance = ModuleClass()
+                if hasattr(instance, 'name') and instance.name:
+                    schema = getattr(instance, 'config_schema', None)
+                    schemas[instance.name] = {
+                        "schema": schema,
+                        "file": file
+                    }
+        except Exception:
+            pass
+    return schemas
+
+def prompt_config_by_schema(schema, current_val, path=""):
+    if not isinstance(schema, dict):
+        return current_val
+        
+    s_type = schema.get("type")
     
-    # 1. Ask for connection type
+    # If it's a simple type
+    if s_type == "boolean":
+        curr_str = "true" if current_val is True else ("false" if current_val is False else "default")
+        val_input = input(f"  {path} (boolean) [current: {curr_str}] (t/f/y/n): ").strip().lower()
+        if not val_input:
+            return current_val
+        return val_input in ("t", "true", "y", "yes")
+        
+    elif s_type in ("integer", "number"):
+        curr_str = str(current_val) if current_val is not None else "default"
+        val_input = input(f"  {path} ({s_type}) [current: {curr_str}]: ").strip()
+        if not val_input:
+            return current_val
+        try:
+            if s_type == "integer":
+                return int(val_input)
+            else:
+                return float(val_input)
+        except ValueError:
+            print("Invalid number. Keeping current value.")
+            return current_val
+            
+    elif s_type == "string":
+        curr_str = str(current_val) if current_val is not None else "default"
+        enum_list = schema.get("enum")
+        if enum_list:
+            print(f"  Choose for {path} (enum) [current: {curr_str}]:")
+            for i, val in enumerate(enum_list):
+                print(f"    {i + 1}) {val}")
+            val_input = input(f"  Enter choice [1-{len(enum_list)}]: ").strip()
+            if not val_input:
+                return current_val
+            if val_input.isdigit() and 1 <= int(val_input) <= len(enum_list):
+                return enum_list[int(val_input) - 1]
+            else:
+                print("Invalid choice. Keeping current value.")
+                return current_val
+        else:
+            val_input = input(f"  {path} (string) [current: {curr_str}]: ").strip()
+            if not val_input and current_val is not None:
+                return current_val
+            return val_input
+            
+    elif s_type == "array":
+        items_schema = schema.get("items", {})
+        curr_str = json.dumps(current_val) if current_val is not None else "[]"
+        print(f"  Editing array for {path} [current: {curr_str}]")
+        val_input = input(f"  Enter comma-separated values for {path}: ").strip()
+        if not val_input:
+            return current_val
+        parts = [x.strip() for x in val_input.split(",") if x.strip()]
+        item_type = items_schema.get("type")
+        if item_type == "integer":
+            ret = []
+            for p in parts:
+                try:
+                    ret.append(int(p))
+                except ValueError:
+                    pass
+            return ret
+        elif item_type == "number":
+            ret = []
+            for p in parts:
+                try:
+                    ret.append(float(p))
+                except ValueError:
+                    pass
+            return ret
+        else:
+            return parts
+            
+    elif s_type == "object":
+        properties = schema.get("properties", {})
+        if not properties:
+            return current_val
+        if current_val is None:
+            current_val = {}
+        res_obj = dict(current_val)
+        
+        print(f"\n--- Configuring {path if path else 'object'} ---")
+        for prop_name, prop_schema in properties.items():
+            sub_path = f"{path}.{prop_name}" if path else prop_name
+            res_obj[prop_name] = prompt_config_by_schema(prop_schema, res_obj.get(prop_name), sub_path)
+        return res_obj
+        
+    return current_val
+
+def configure_connection(current_conn):
+    print("\n--- Connection Settings ---")
     print("Select Connection Type:")
     print("1) Auto-discovery (Serial -> BLE -> TCP fallback) [Recommended]")
     print("2) Serial")
@@ -52,32 +174,35 @@ def run_config_wizard():
         
     conn_config = {
         "type": conn_type,
-        "address": "",
-        "port": "",
-        "baudrate": 115200,
-        "host": "127.0.0.1",
-        "tcpPort": 5000
+        "address": current_conn.get("address", ""),
+        "port": current_conn.get("port", ""),
+        "baudrate": current_conn.get("baudrate", 115200),
+        "host": current_conn.get("host", "127.0.0.1"),
+        "tcpPort": current_conn.get("tcpPort", 5000)
     }
     
     if conn_type == "serial":
         ports = list(serial.tools.list_ports.comports())
         if not ports:
             print("No serial ports detected on the system.")
-            port_input = input("Enter serial port name (e.g. COM11 or /dev/ttyUSB0): ").strip()
-            conn_config["port"] = port_input
+            port_input = input(f"Enter serial port name (e.g. COM11 or /dev/ttyUSB0) [current: {conn_config['port']}]: ").strip()
+            if port_input:
+                conn_config["port"] = port_input
         else:
             print("\nAvailable Serial Ports:")
             for i, p in enumerate(ports):
                 print(f"  {i + 1}) {p.device} - {p.description}")
-            port_choice = input(f"Select port [1-{len(ports)}]: ").strip()
+            port_choice = input(f"Select port [1-{len(ports)}, current: {conn_config['port']}]: ").strip()
             if port_choice.isdigit() and 1 <= int(port_choice) <= len(ports):
                 conn_config["port"] = ports[int(port_choice) - 1].device
+            elif not port_choice and conn_config["port"]:
+                pass
             else:
-                print("Invalid port choice, please enter port name directly.")
-                port_input = input("Enter serial port name (e.g., COM11): ").strip()
-                conn_config["port"] = port_input
+                port_input = input("Enter serial port name directly: ").strip()
+                if port_input:
+                    conn_config["port"] = port_input
         
-        baud = input("Enter baudrate [default 115200]: ").strip()
+        baud = input(f"Enter baudrate [current: {conn_config['baudrate']}]: ").strip()
         if baud.isdigit():
             conn_config["baudrate"] = int(baud)
             
@@ -94,36 +219,132 @@ def run_config_wizard():
             
             if not meshcore_devices:
                 print("No BLE devices starting with 'MeshCore-' detected.")
-                addr = input("Enter BLE Mac/UUID Address directly: ").strip()
-                conn_config["address"] = addr
+                addr = input(f"Enter BLE Mac/UUID Address directly [current: {conn_config['address']}]: ").strip()
+                if addr:
+                    conn_config["address"] = addr
             else:
                 print("\nAvailable BLE Nodes:")
                 for i, d in enumerate(meshcore_devices):
                     print(f"  {i + 1}) {d.name} ({d.address})")
-                ble_choice = input(f"Select node [1-{len(meshcore_devices)}]: ").strip()
+                ble_choice = input(f"Select node [1-{len(meshcore_devices)}, current: {conn_config['address']}]: ").strip()
                 if ble_choice.isdigit() and 1 <= int(ble_choice) <= len(meshcore_devices):
                     conn_config["address"] = meshcore_devices[int(ble_choice) - 1].address
+                elif not ble_choice and conn_config["address"]:
+                    pass
                 else:
                     addr = input("Enter BLE Mac/UUID Address directly: ").strip()
-                    conn_config["address"] = addr
+                    if addr:
+                        conn_config["address"] = addr
         except ImportError:
             print("bleak library not installed or not supported on this platform.")
-            addr = input("Enter BLE Mac/UUID Address: ").strip()
-            conn_config["address"] = addr
+            addr = input(f"Enter BLE Mac/UUID Address [current: {conn_config['address']}]: ").strip()
+            if addr:
+                conn_config["address"] = addr
         except Exception as e:
             print(f"BLE Scan failed: {e}")
-            addr = input("Enter BLE Mac/UUID Address: ").strip()
-            conn_config["address"] = addr
+            addr = input(f"Enter BLE Mac/UUID Address [current: {conn_config['address']}]: ").strip()
+            if addr:
+                conn_config["address"] = addr
             
     elif conn_type == "tcp":
-        host = input("Enter TCP host [default 127.0.0.1]: ").strip()
+        host = input(f"Enter TCP host [current: {conn_config['host']}]: ").strip()
         if host:
             conn_config["host"] = host
-        port_num = input("Enter TCP port [default 5000]: ").strip()
+        port_num = input(f"Enter TCP port [current: {conn_config['tcpPort']}]: ").strip()
         if port_num.isdigit():
             conn_config["tcpPort"] = int(port_num)
             
-    # Load existing config to update
+    return conn_config
+
+def configure_core(current_core):
+    print("\n--- Core Settings ---")
+    core_config = {
+        "timeSyncInterval": current_core.get("timeSyncInterval", "0 0 * * *"),
+        "shutdownTimeoutMs": current_core.get("shutdownTimeoutMs", 10000),
+        "ipcPort": current_core.get("ipcPort", 5002)
+    }
+    
+    interval = input(f"Enter Time Sync Cron Interval [current: {core_config['timeSyncInterval']}]: ").strip()
+    if interval:
+        core_config["timeSyncInterval"] = interval
+        
+    timeout = input(f"Enter Shutdown Timeout in milliseconds [current: {core_config['shutdownTimeoutMs']}]: ").strip()
+    if timeout.isdigit():
+        core_config["shutdownTimeoutMs"] = int(timeout)
+        
+    ipc = input(f"Enter Local IPC Port [current: {core_config['ipcPort']}]: ").strip()
+    if ipc.isdigit():
+        core_config["ipcPort"] = int(ipc)
+        
+    return core_config
+
+def configure_modules(current_modules):
+    print("\n--- Modules Settings ---")
+    schemas = load_module_schemas()
+    if not schemas:
+        print("No installed modules found.")
+        return current_modules
+        
+    modules_config = dict(current_modules)
+    
+    while True:
+        print("\nInstalled Modules:")
+        module_list = sorted(schemas.keys())
+        for i, mod_name in enumerate(module_list):
+            is_enabled = modules_config.get(mod_name, {}).get("enabled", False)
+            status = "ENABLED" if is_enabled else "DISABLED"
+            print(f"  {i + 1}) {mod_name} [Status: {status}]")
+        print(f"  {len(module_list) + 1}) Back")
+        
+        choice = input(f"Select a module to configure [1-{len(module_list) + 1}]: ").strip()
+        if not choice or choice == str(len(module_list) + 1):
+            break
+            
+        if choice.isdigit() and 1 <= int(choice) <= len(module_list):
+            mod_name = module_list[int(choice) - 1]
+            mod_schema = schemas[mod_name]["schema"]
+            mod_config = modules_config.get(mod_name, {})
+            
+            while True:
+                is_enabled = mod_config.get("enabled", False)
+                status = "ENABLED" if is_enabled else "DISABLED"
+                print(f"\n--- Configure Module: {mod_name} [{status}] ---")
+                print("  1) Toggle Enable/Disable")
+                print("  2) Edit Detailed Configuration Properties")
+                print("  3) Back")
+                
+                sub_choice = input("Select option [1-3]: ").strip()
+                if not sub_choice or sub_choice == "3":
+                    break
+                    
+                if sub_choice == "1":
+                    mod_config["enabled"] = not is_enabled
+                    modules_config[mod_name] = mod_config
+                    print(f"Module '{mod_name}' is now {'ENABLED' if mod_config['enabled'] else 'DISABLED'}.")
+                elif sub_choice == "2":
+                    if not mod_schema:
+                        print(f"Module '{mod_name}' does not define a config schema. Cannot edit properties.")
+                        continue
+                    new_mod_config = prompt_config_by_schema(mod_schema, mod_config, mod_name)
+                    from core.validator import validate as validate_schema
+                    errors = validate_schema(mod_schema, new_mod_config)
+                    if errors:
+                        print("\n[Error] Module configuration validation failed:")
+                        for err in errors:
+                            print(f"  - {err}")
+                        print("Module settings changes were NOT applied.")
+                    else:
+                        mod_config = new_mod_config
+                        modules_config[mod_name] = mod_config
+                        print("Module configuration updated successfully.")
+                        
+    return modules_config
+
+def run_config_wizard():
+    print("==================================================")
+    print("        MeshCore-bot Configuration Wizard         ")
+    print("==================================================")
+    
     config_path = "config/config.json"
     schema_path = "config/schema.json"
     
@@ -136,37 +357,63 @@ def run_config_wizard():
     else:
         full_config = {}
         
-    full_config["connection"] = conn_config
+    if "connection" not in full_config:
+        full_config["connection"] = {
+            "type": "auto",
+            "address": "",
+            "port": "",
+            "baudrate": 115200,
+            "host": "127.0.0.1",
+            "tcpPort": 5000
+        }
     if "core" not in full_config:
         full_config["core"] = {
             "timeSyncInterval": "0 0 * * *",
             "shutdownTimeoutMs": 10000,
             "ipcPort": 5002
         }
-    else:
-        if "ipcPort" not in full_config["core"]:
-            full_config["core"]["ipcPort"] = 5002
     if "modules" not in full_config:
         full_config["modules"] = {}
         
-    # Validate against schema
-    from core.validator import validate as validate_schema
-    if os.path.exists(schema_path):
-        with open(schema_path, 'r') as f:
-            schema = json.load(f)
-        errors = validate_schema(schema, full_config)
-        if errors:
-            print("\n[Error] Schema validation failed for the generated configuration:")
-            for err in errors:
-                print(f"  - {err}")
-            print("Changes were NOT saved.")
-            return
-            
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    with open(config_path, 'w') as f:
-        json.dump(full_config, f, indent=2)
+    while True:
+        print("\nSelect Configuration Option:")
+        print("1) Configure Connection Settings")
+        print("2) Configure Core Settings (IPC, Time Sync, Shutdown Timeout)")
+        print("3) Configure Installed Modules")
+        print("4) Save & Exit")
+        print("5) Discard & Exit")
         
-    print(f"\nConfiguration successfully validated and written to '{config_path}'")
+        choice = input("Enter choice [1-5]: ").strip()
+        if choice == "1":
+            full_config["connection"] = configure_connection(full_config["connection"])
+        elif choice == "2":
+            full_config["core"] = configure_core(full_config["core"])
+        elif choice == "3":
+            full_config["modules"] = configure_modules(full_config["modules"])
+        elif choice == "4":
+            # Validate against schema
+            from core.validator import validate as validate_schema
+            if os.path.exists(schema_path):
+                with open(schema_path, 'r') as f:
+                    schema = json.load(f)
+                errors = validate_schema(schema, full_config)
+                if errors:
+                    print("\n[Error] Schema validation failed for the configuration:")
+                    for err in errors:
+                        print(f"  - {err}")
+                    print("Changes were NOT saved. Please correct the errors before saving.")
+                    continue
+            
+            os.makedirs(os.path.dirname(config_path), exist_ok=True)
+            with open(config_path, 'w') as f:
+                json.dump(full_config, f, indent=2)
+            print(f"\nConfiguration successfully validated and written to '{config_path}'")
+            break
+        elif choice == "5":
+            print("\nConfiguration changes discarded.")
+            break
+        else:
+            print("Invalid choice. Please choose between 1 and 5.")
 
 def is_process_running(pid):
     if sys.platform == "win32":
