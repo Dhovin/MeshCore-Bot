@@ -396,6 +396,59 @@ class WeatherBot:
             "required": ["enabled"]
         }
 
+    def run_config(self, current_config):
+        """
+        Interactive configuration wizard for the WeatherBot module.
+        Prompts the user for key settings.
+        """
+        config = dict(current_config) if current_config else {}
+        
+        print("\n--- Configure Weather Bot Settings ---")
+        
+        # 1. Zip Code
+        current_zip = config.get("zipCode", "20001")
+        val = input(f"Enter Default Zip Code [current: {current_zip}]: ").strip()
+        if val:
+            config["zipCode"] = val
+            
+        # 2. Daily Alarm Time
+        current_alarm = config.get("weatherAlarm", "06:00")
+        val = input(f"Enter Daily Forecast Alarm Time (HH:MM) [current: {current_alarm}]: ").strip()
+        if val:
+            config["weatherAlarm"] = val
+            
+        # 3. Channels config
+        channels = config.get("channels", {})
+        alerts_ch = channels.get("alerts", "weather")
+        val = input(f"Enter Channel Name/Index for weather alerts [current: {alerts_ch}]: ").strip()
+        if val:
+            channels["alerts"] = val
+            
+        weather_ch = channels.get("weather", "weather")
+        val = input(f"Enter Channel Name/Index for daily forecasts [current: {weather_ch}]: ").strip()
+        if val:
+            channels["weather"] = val
+        config["channels"] = channels
+        
+        # 4. Lightning warning radius
+        current_radius = config.get("blitzRadiusMiles", 10)
+        val = input(f"Enter Lightning Alert Radius (miles) [current: {current_radius}]: ").strip()
+        if val:
+            try:
+                config["blitzRadiusMiles"] = float(val)
+            except ValueError:
+                print("Invalid number, keeping current radius.")
+                
+        # 5. Meteo alerts enabled
+        meteo = config.get("meteoAlerts", {})
+        current_meteo_enabled = meteo.get("enabled", True)
+        val = input(f"Enable Severe Weather (NWS) Alerts? (y/n) [current: {'y' if current_meteo_enabled else 'n'}]: ").strip().lower()
+        if val:
+            meteo["enabled"] = val in ("y", "yes", "true")
+            config["meteoAlerts"] = meteo
+            
+        return config
+
     def init(self, api, config):
         self.api = api
         self.config = config

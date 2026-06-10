@@ -49,6 +49,7 @@ def load_module_schemas():
                 if hasattr(instance, 'name') and instance.name:
                     schema = getattr(instance, 'config_schema', None)
                     schemas[instance.name] = {
+                        "instance": instance,
                         "schema": schema,
                         "file": file
                     }
@@ -322,10 +323,14 @@ def configure_modules(current_modules):
                     modules_config[mod_name] = mod_config
                     print(f"Module '{mod_name}' is now {'ENABLED' if mod_config['enabled'] else 'DISABLED'}.")
                 elif sub_choice == "2":
-                    if not mod_schema:
-                        print(f"Module '{mod_name}' does not define a config schema. Cannot edit properties.")
-                        continue
-                    new_mod_config = prompt_config_by_schema(mod_schema, mod_config, mod_name)
+                    instance = schemas[mod_name]["instance"]
+                    if hasattr(instance, 'run_config') and callable(instance.run_config):
+                        new_mod_config = instance.run_config(mod_config)
+                    else:
+                        if not mod_schema:
+                            print(f"Module '{mod_name}' does not define a config schema or run_config method. Cannot edit properties.")
+                            continue
+                        new_mod_config = prompt_config_by_schema(mod_schema, mod_config, mod_name)
                     from core.validator import validate as validate_schema
                     errors = validate_schema(mod_schema, new_mod_config)
                     if errors:
