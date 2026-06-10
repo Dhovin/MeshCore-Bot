@@ -697,13 +697,16 @@ class WeatherBot:
         idx = self._get_channel_idx(weather_channel_name)
         if not is_dm:
             is_weather_channel = False
-            if isinstance(channel, int) and channel == idx:
-                is_weather_channel = True
-            elif isinstance(channel, str):
-                if channel.isdigit() and int(channel) == idx:
+            if idx is not None:
+                if isinstance(channel, int) and channel == idx:
                     is_weather_channel = True
-                elif channel.lower() == weather_channel_name.lower():
-                    is_weather_channel = True
+                elif isinstance(channel, str):
+                    if channel.isdigit() and int(channel) == idx:
+                        is_weather_channel = True
+                    elif channel.lower() == weather_channel_name.lower():
+                        is_weather_channel = True
+                    elif channel.lower().lstrip('#') == weather_channel_name.lower().lstrip('#'):
+                        is_weather_channel = True
             if not is_weather_channel:
                 return
                 
@@ -746,13 +749,16 @@ class WeatherBot:
         idx = self._get_channel_idx(weather_channel_name)
         
         is_weather_channel = False
-        if isinstance(channel, int) and channel == idx:
-            is_weather_channel = True
-        elif isinstance(channel, str):
-            if channel.isdigit() and int(channel) == idx:
+        if idx is not None:
+            if isinstance(channel, int) and channel == idx:
                 is_weather_channel = True
-            elif channel.lower() == weather_channel_name.lower():
-                is_weather_channel = True
+            elif isinstance(channel, str):
+                if channel.isdigit() and int(channel) == idx:
+                    is_weather_channel = True
+                elif channel.lower() == weather_channel_name.lower():
+                    is_weather_channel = True
+                elif channel.lower().lstrip('#') == weather_channel_name.lower().lstrip('#'):
+                    is_weather_channel = True
                 
         if is_weather_channel:
             await self.api.bot.connection_manager.execute(["chan", str(idx), text])
@@ -761,10 +767,10 @@ class WeatherBot:
 
     def _get_channel_idx(self, channel_arg):
         if not self.api or not self.api.bot or not self.api.bot.connection_manager:
-            return 0
+            return None
         mc = self.api.bot.connection_manager.mc
         if not mc:
-            return 0
+            return None
             
         channels = getattr(mc, 'channels', [])
         if isinstance(channel_arg, int):
@@ -772,10 +778,24 @@ class WeatherBot:
         if isinstance(channel_arg, str) and channel_arg.isdigit():
             return int(channel_arg)
             
+        if not isinstance(channel_arg, str):
+            return None
+            
+        arg_clean = channel_arg.lower().lstrip('#').strip()
+        
         for ch in channels:
-            if ch.get("channel_name") == channel_arg:
-                return ch.get("channel_idx", 0)
-        return 0
+            ch_name = ch.get("channel_name")
+            if not ch_name:
+                continue
+            if ch_name == channel_arg:
+                return ch.get("channel_idx")
+            if ch_name.lower() == channel_arg.lower():
+                return ch.get("channel_idx")
+            ch_clean = ch_name.lower().lstrip('#').strip()
+            if ch_clean == arg_clean:
+                return ch.get("channel_idx")
+                
+        return None
 
     async def geocode_cached(self, key, lat, lon):
         if key in self.geo_cache:
@@ -880,6 +900,10 @@ class WeatherBot:
     async def send_alert(self, message, channel_type):
         channel_name = self.channel_names.get(channel_type, "weather")
         idx = self._get_channel_idx(channel_name)
+        if idx is None:
+            logger.warning(f"[{self.name}] Channel '{channel_name}' not found. Skipping alert.")
+            return
+            
         shortened = shorten_to_bytes(message, 155)
         
         logger.info(f"[{self.name}] Sending alert: {shortened}")
@@ -1041,9 +1065,12 @@ class WeatherBot:
             if chunks:
                 channel_name = self.channel_names.get("weather", "weather")
                 idx = self._get_channel_idx(channel_name)
-                for chunk in chunks:
-                    await self.api.bot.connection_manager.execute(["chan", str(idx), chunk])
-                    await asyncio.sleep(30)
+                if idx is None:
+                    logger.warning(f"[{self.name}] Channel '{channel_name}' not found. Skipping daily forecast broadcast.")
+                else:
+                    for chunk in chunks:
+                        await self.api.bot.connection_manager.execute(["chan", str(idx), chunk])
+                        await asyncio.sleep(30)
         except Exception as e:
             logger.error(f"[{self.name}] Main channel forecast broadcast failed: {e}")
             
