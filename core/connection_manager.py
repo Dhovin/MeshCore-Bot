@@ -1184,6 +1184,7 @@ class ConnectionManager:
         self.mc.subscribe(EventType.DISCONNECTED, self._on_disconnect)
         self.mc.subscribe(EventType.RX_LOG_DATA, self._on_rx_log_data)
         self.mc.subscribe(EventType.RAW_DATA, self._on_raw_data)
+        self.mc.subscribe(EventType.SELF_INFO, self._on_self_info)
 
     async def _run_handshake(self):
         # Establish background contact loading
@@ -1199,6 +1200,15 @@ class ConnectionManager:
 
         self.deviceInfo = res.payload
         self.isConnected = True
+
+        # Fetch node self_info config (appstart)
+        logger.info("Requesting node self info configuration...")
+        try:
+            self_info_res = await self.mc.commands.send_appstart()
+            if self_info_res.type == EventType.ERROR:
+                logger.warning(f"Failed to query self info configuration: {self_info_res}")
+        except Exception as e:
+            logger.warning(f"Error executing send_appstart: {e}")
 
         # Update cache
         self.bot.state_cache.update("connectionStatus", "connected")
@@ -1365,6 +1375,14 @@ class ConnectionManager:
             self.bot.event_bus.publish("raw_data", event.payload)
         except Exception as e:
             logger.error(f"Error handling raw data event: {e}", exc_info=True)
+
+    def _on_self_info(self, event):
+        try:
+            logger.info(f"Received self info telemetry: {event.payload}")
+            self.bot.state_cache.update_from_telemetry(event.payload)
+            self.bot.event_bus.publish("self_info", event.payload)
+        except Exception as e:
+            logger.error(f"Error handling self info event: {e}", exc_info=True)
 
     def _get_channel_by_name(self, name):
         channels = getattr(self.mc, 'channels', [])
