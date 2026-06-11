@@ -445,7 +445,12 @@ def is_process_running(pid):
         try:
             os.kill(pid, 0)
             return True
-        except OSError:
+        except PermissionError:
+            return True
+        except OSError as e:
+            import errno
+            if e.errno == errno.EPERM:
+                return True
             return False
 
 def run_status():
