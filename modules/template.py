@@ -72,8 +72,11 @@ class Template:
         """
         sender = data.get("sender", "unknown")
         text = data.get("text", "")
-        channel = data.get("channel", 0)
-        logger.info(f"[{self.name}] Received message from {sender} on channel {channel}: {text}")
+        channel = data.get("channel")
+        if channel is None:
+            logger.info(f"[{self.name}] Received direct message from {sender}: {text}")
+        else:
+            logger.info(f"[{self.name}] Received message from {sender} on channel {channel}: {text}")
         
         # Example of responding using api.send if prefix matches or ping
         if text.strip().lower() == "ping":

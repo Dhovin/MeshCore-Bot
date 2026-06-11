@@ -1199,7 +1199,7 @@ class ConnectionManager:
             msg = {
                 "sender": sender,
                 "text": text_val,
-                "channel": 0,
+                "channel": None,
                 "timestamp": payload.get("time") or payload.get("sender_timestamp") or int(time.time()),
                 "snr": payload.get("snr") or payload.get("SNR"),
                 "rssi": payload.get("rssi") or payload.get("RSSI"),

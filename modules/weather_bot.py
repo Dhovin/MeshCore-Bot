@@ -617,7 +617,7 @@ class WeatherBot:
     def _on_message(self, data):
         sender = data.get("sender", "unknown")
         text = data.get("text", "").strip()
-        channel = data.get("channel", 0)
+        channel = data.get("channel")
         
         # Prevent self loops
         mc = self.api.bot.connection_manager.mc
@@ -636,7 +636,7 @@ class WeatherBot:
         clean_text = re.sub(r'^[A-Za-z0-9_.-]+:\s+', '', text).strip()
         lower_text = clean_text.lower()
         
-        is_dm = (channel == 0 or channel is None)
+        is_dm = (channel is None)
         
         # Version / Info commands
         if lower_text in ("version", "info"):
