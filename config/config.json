@@ -13,6 +13,13 @@
     "ipcPort": 5002
   },
   "modules": {
+    "test_ack": {
+      "enabled": true,
+      "channels": [
+        "#test",
+        "#testing"
+      ]
+    },
     "template": {
       "enabled": true,
       "messagePrefix": "[MeshBot]",
