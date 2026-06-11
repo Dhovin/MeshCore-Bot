@@ -660,21 +660,49 @@ class ConnectionManager:
                         return {"error": f"Failed to set path_hash_mode: {res}"}
                     return res.payload
                 elif setting == "lat":
-                    res = await self.mc.commands.set_coord_lat(float(value))
+                    try:
+                        lat_val = float(value)
+                    except ValueError:
+                        return {"error": "Latitude must be a valid float."}
+                    res = await self.mc.commands.set_coord_lat(lat_val)
                     if res.type == EventType.ERROR:
                         return {"error": f"Failed to set lat: {res}"}
+                    if "core" not in self.bot.config:
+                        self.bot.config["core"] = {}
+                    self.bot.config["core"]["latitude"] = lat_val
+                    self.save_config()
                     return res.payload
                 elif setting == "lon":
-                    res = await self.mc.commands.set_coord_lon(float(value))
+                    try:
+                        lon_val = float(value)
+                    except ValueError:
+                        return {"error": "Longitude must be a valid float."}
+                    res = await self.mc.commands.set_coord_lon(lon_val)
                     if res.type == EventType.ERROR:
                         return {"error": f"Failed to set lon: {res}"}
+                    if "core" not in self.bot.config:
+                        self.bot.config["core"] = {}
+                    self.bot.config["core"]["longitude"] = lon_val
+                    self.save_config()
                     return res.payload
                 elif setting == "coords":
                     parts = value.split(",")
                     if len(parts) == 2:
-                        await self.mc.commands.set_coord_lat(float(parts[0]))
-                        await self.mc.commands.set_coord_lon(float(parts[1]))
-                        return {"lat": parts[0], "lon": parts[1]}
+                        try:
+                            lat_val = float(parts[0])
+                            lon_val = float(parts[1])
+                        except ValueError:
+                            return {"error": "Coords must be valid floats in format lat,lon"}
+                        lat_res = await self.mc.commands.set_coord_lat(lat_val)
+                        lon_res = await self.mc.commands.set_coord_lon(lon_val)
+                        if lat_res.type == EventType.ERROR or lon_res.type == EventType.ERROR:
+                            return {"error": f"Failed to set coords: lat={lat_res}, lon={lon_res}"}
+                        if "core" not in self.bot.config:
+                            self.bot.config["core"] = {}
+                        self.bot.config["core"]["latitude"] = lat_val
+                        self.bot.config["core"]["longitude"] = lon_val
+                        self.save_config()
+                        return {"lat": lat_val, "lon": lon_val}
                     return {"error": "Coords must be in format lat,lon"}
                 elif setting == "autoadd_config":
                     val_int = int(value, 16) if value.lower().startswith("0x") else int(value)
@@ -1182,6 +1210,22 @@ class ConnectionManager:
         # Trigger clock sync immediately
         await self.sync_time()
 
+        # Push coordinate settings to the node if configured
+        core_cfg = self.bot.config.get("core", {})
+        lat = core_cfg.get("latitude")
+        lon = core_cfg.get("longitude")
+        if lat is not None and lon is not None:
+            logger.info(f"Setting persistent GPS coordinates from config on startup: lat={lat}, lon={lon}")
+            try:
+                lat_res = await self.mc.commands.set_coord_lat(float(lat))
+                lon_res = await self.mc.commands.set_coord_lon(float(lon))
+                if lat_res.type == EventType.ERROR or lon_res.type == EventType.ERROR:
+                    logger.warning(f"Failed to set GPS coordinates on node: {lat_res} / {lon_res}")
+                else:
+                    logger.info("Successfully pushed GPS coordinates to device.")
+            except Exception as e:
+                logger.error(f"Error pushing GPS coordinates to device: {e}", exc_info=True)
+
     def _on_private_message(self, event):
         try:
             payload = event.payload or {}
@@ -1390,3 +1434,11 @@ class ConnectionManager:
             logger.info(f"Saved {len(merged)} contacts persistently to {contacts_file}.")
         except Exception as e:
             logger.error(f"Error saving contacts: {e}", exc_info=True)
+
+    def save_config(self):
+        try:
+            with open(self.bot.config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.bot.config, f, indent=2)
+            logger.info("Successfully persisted config.json with updated settings.")
+        except Exception as e:
+            logger.error(f"Error saving config.json: {e}", exc_info=True)

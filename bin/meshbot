@@ -281,6 +281,40 @@ def configure_core(current_core):
     tz = input(f"Enter Timezone (e.g. America/Chicago, UTC, or auto) [current: {core_config['timezone']}]: ").strip()
     if tz:
         core_config["timezone"] = tz
+
+    # Optional latitude
+    lat_val = current_core.get("latitude")
+    lat_str = str(lat_val) if lat_val is not None else "None"
+    lat_in = input(f"Enter GPS Latitude (optional) [current: {lat_str}]: ").strip()
+    if lat_in:
+        if lat_in.lower() == "none":
+            pass  # omit
+        else:
+            try:
+                core_config["latitude"] = float(lat_in)
+            except ValueError:
+                print("Invalid latitude format. Ignoring.")
+                if lat_val is not None:
+                    core_config["latitude"] = lat_val
+    elif lat_val is not None:
+        core_config["latitude"] = lat_val
+
+    # Optional longitude
+    lon_val = current_core.get("longitude")
+    lon_str = str(lon_val) if lon_val is not None else "None"
+    lon_in = input(f"Enter GPS Longitude (optional) [current: {lon_str}]: ").strip()
+    if lon_in:
+        if lon_in.lower() == "none":
+            pass  # omit
+        else:
+            try:
+                core_config["longitude"] = float(lon_in)
+            except ValueError:
+                print("Invalid longitude format. Ignoring.")
+                if lon_val is not None:
+                    core_config["longitude"] = lon_val
+    elif lon_val is not None:
+        core_config["longitude"] = lon_val
         
     return core_config
 
