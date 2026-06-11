@@ -1183,13 +1183,26 @@ class ConnectionManager:
     def _on_private_message(self, event):
         try:
             payload = event.payload or {}
+            
+            # Extract text from "text" or "message" or "crypted"
+            text_val = payload.get("text") or payload.get("message") or payload.get("crypted") or ""
+            
+            # Resolve sender from "sender", "from", or pubkey_prefix
+            sender = payload.get("sender") or payload.get("from")
+            if not sender and "pubkey_prefix" in payload:
+                contact = self.mc.get_contact_by_key_prefix(payload["pubkey_prefix"])
+                if contact:
+                    sender = contact.get("adv_name") or contact.get("name")
+            if not sender:
+                sender = "unknown"
+                
             msg = {
-                "sender": payload.get("sender") or payload.get("from") or "unknown",
-                "text": payload.get("message") or payload.get("crypted") or "",
+                "sender": sender,
+                "text": text_val,
                 "channel": 0,
-                "timestamp": payload.get("time") or int(time.time()),
-                "snr": payload.get("snr"),
-                "rssi": payload.get("rssi"),
+                "timestamp": payload.get("time") or payload.get("sender_timestamp") or int(time.time()),
+                "snr": payload.get("snr") or payload.get("SNR"),
+                "rssi": payload.get("rssi") or payload.get("RSSI"),
                 "path": payload.get("path", [])
             }
             self.bot.event_bus.publish("message", msg)
@@ -1199,13 +1212,33 @@ class ConnectionManager:
     def _on_channel_message(self, event):
         try:
             payload = event.payload or {}
+            
+            # Extract text from "text" or "message" or "crypted"
+            text_val = payload.get("text") or payload.get("message") or payload.get("crypted") or ""
+            
+            # Resolve channel index or name
+            channel_val = payload.get("channel_idx")
+            if channel_val is None:
+                channel_val = payload.get("chan_name") or payload.get("chan_nb") or 0
+                
+            # If the text is prefixed with a name (e.g. "Name: message"), extract it
+            sender = payload.get("sender") or payload.get("from")
+            if not sender:
+                import re
+                match = re.match(r'^([A-Za-z0-9_.-]+):\s+(.*)$', text_val)
+                if match:
+                    sender = match.group(1)
+                    text_val = match.group(2)
+                else:
+                    sender = "unknown"
+                    
             msg = {
-                "sender": payload.get("sender") or payload.get("from") or "unknown",
-                "text": payload.get("message") or payload.get("crypted") or "",
-                "channel": payload.get("chan_name") or payload.get("chan_nb") or 0,
-                "timestamp": payload.get("time") or int(time.time()),
-                "snr": payload.get("snr"),
-                "rssi": payload.get("rssi"),
+                "sender": sender,
+                "text": text_val,
+                "channel": channel_val,
+                "timestamp": payload.get("time") or payload.get("sender_timestamp") or int(time.time()),
+                "snr": payload.get("snr") or payload.get("SNR"),
+                "rssi": payload.get("rssi") or payload.get("RSSI"),
                 "path": payload.get("path", [])
             }
             self.bot.event_bus.publish("message", msg)
