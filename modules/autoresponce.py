@@ -116,33 +116,34 @@ class Autoresponce:
         text = data.get("text", "")
         channel = data.get("channel")
         
-        # Prevent self loops
-        mc = self.api.bot.connection_manager.mc
-        if mc and mc.self_info:
-            self_name = mc.self_info.get("name")
-            if self_name and sender == self_name:
-                return
+        if self.api.is_self(sender):
+            return
 
         # Direct messages do not map to target channels
         if channel is None:
             return
 
+        # Fast synchronous pattern check
+        if "test" not in text.lower():
+            return
+
+        asyncio.create_task(self._handle_message_async(sender, text, channel))
+
+    async def _handle_message_async(self, sender, text, channel):
         # Verify if incoming channel index matches any of our monitored indices
         is_target_channel = False
         target_idx = None
-        for ch, idx in self.channel_indices.items():
-            if idx is not None and channel == idx:
+        for ch in self.channels:
+            if await self.api.matches_channel(channel, ch):
                 is_target_channel = True
-                target_idx = idx
+                target_idx = self.channel_indices.get(ch)
                 break
 
         if not is_target_channel:
             return
 
-        # Check if the word "test" is present in the message (case-insensitive)
-        if "test" in text.lower():
-            logger.info(f"[{self.name}] Match found! Sender: {sender}, Msg: {text}, Channel Index: {target_idx}")
-            asyncio.create_task(self._send_reply(sender, target_idx))
+        logger.info(f"[{self.name}] Match found! Sender: {sender}, Msg: {text}, Channel Index: {target_idx}")
+        await self._send_reply(sender, target_idx)
 
     async def _send_reply(self, recipient, channel_idx):
         reply = f"@[{recipient}] ACK"

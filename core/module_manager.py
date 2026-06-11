@@ -159,6 +159,31 @@ class ModuleAPI:
             raise ValueError("Command injection attempt detected: newlines are not allowed.")
         return clean_cmd
 
+    def is_self(self, sender):
+        """Check if the sender name matches the connected node's display name to prevent self-loops."""
+        if not self.bot.connection_manager or not self.bot.connection_manager.mc:
+            return False
+        mc = self.bot.connection_manager.mc
+        if mc and mc.self_info:
+            self_name = mc.self_info.get("name")
+            return bool(self_name and sender == self_name)
+        return False
+
+    async def matches_channel(self, channel, target_channel_name):
+        """Verify if the given channel index or name matches the target channel name."""
+        idx = await self.request_channel(target_channel_name)
+        if idx is None:
+            return False
+        if isinstance(channel, int) and channel == idx:
+            return True
+        if isinstance(channel, str):
+            if channel.isdigit() and int(channel) == idx:
+                return True
+            clean_target = target_channel_name.lower().lstrip('#')
+            clean_channel = channel.lower().lstrip('#')
+            return clean_channel == clean_target
+        return False
+
 class ModuleManager:
     def __init__(self, bot):
         self.bot = bot

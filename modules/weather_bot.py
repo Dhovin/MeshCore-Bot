@@ -620,12 +620,9 @@ class WeatherBot:
         channel = data.get("channel")
         
         # Prevent self loops
-        mc = self.api.bot.connection_manager.mc
-        if mc and mc.self_info:
-            self_name = mc.self_info.get("name")
-            if self_name and sender == self_name:
-                return
-                
+        if self.api.is_self(sender):
+            return
+            
         if not text:
             return
             
@@ -698,19 +695,8 @@ class WeatherBot:
             
         # If we are on channel, ensure it matches weather channel index
         weather_channel_name = self.channel_names.get("weather", "weather")
-        idx = await self._get_channel_idx(weather_channel_name)
         if not is_dm:
-            is_weather_channel = False
-            if idx is not None:
-                if isinstance(channel, int) and channel == idx:
-                    is_weather_channel = True
-                elif isinstance(channel, str):
-                    if channel.isdigit() and int(channel) == idx:
-                        is_weather_channel = True
-                    elif channel.lower() == weather_channel_name.lower():
-                        is_weather_channel = True
-                    elif channel.lower().lstrip('#') == weather_channel_name.lower().lstrip('#'):
-                        is_weather_channel = True
+            is_weather_channel = await self.api.matches_channel(channel, weather_channel_name)
             if not is_weather_channel:
                 return
                 
@@ -750,21 +736,10 @@ class WeatherBot:
 
     async def _reply(self, sender, channel, text):
         weather_channel_name = self.channel_names.get("weather", "weather")
-        idx = await self._get_channel_idx(weather_channel_name)
-        
-        is_weather_channel = False
-        if idx is not None:
-            if isinstance(channel, int) and channel == idx:
-                is_weather_channel = True
-            elif isinstance(channel, str):
-                if channel.isdigit() and int(channel) == idx:
-                    is_weather_channel = True
-                elif channel.lower() == weather_channel_name.lower():
-                    is_weather_channel = True
-                elif channel.lower().lstrip('#') == weather_channel_name.lower().lstrip('#'):
-                    is_weather_channel = True
+        is_weather_channel = await self.api.matches_channel(channel, weather_channel_name)
                 
         if is_weather_channel:
+            idx = await self._get_channel_idx(weather_channel_name)
             await self.api.bot.connection_manager.execute(["chan", str(idx), text])
         else:
             await self.api.bot.connection_manager.execute(["msg", sender, text])
