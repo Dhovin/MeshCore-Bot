@@ -1226,6 +1226,9 @@ class ConnectionManager:
             except Exception as e:
                 logger.error(f"Error pushing GPS coordinates to device: {e}", exc_info=True)
 
+        # Trigger telemetry sync immediately on boot
+        await self.sync_telemetry()
+
     def _on_private_message(self, event):
         try:
             payload = event.payload or {}
@@ -1442,3 +1445,35 @@ class ConnectionManager:
             logger.info("Successfully persisted config.json with updated settings.")
         except Exception as e:
             logger.error(f"Error saving config.json: {e}", exc_info=True)
+
+    async def sync_telemetry(self):
+        """Query the device for core/radio statistics and update the state cache."""
+        if not self.mc or not self.isConnected:
+            return
+            
+        logger.info("Synchronizing node telemetry and stats...")
+        try:
+            # Query Core Stats (uptime, battery, etc.)
+            core_res = await self.mc.commands.get_stats_core()
+            if core_res.type != EventType.ERROR and isinstance(core_res.payload, dict):
+                payload = core_res.payload
+                if "uptime_secs" in payload:
+                    self.bot.state_cache.update("uptime", payload["uptime_secs"])
+                if "battery_mv" in payload:
+                    mv = payload["battery_mv"]
+                    if mv > 1000: # It's in millivolts
+                        pct = int(max(0, min(100, (mv - 3200) / 10)))
+                    else: # Already a percentage
+                        pct = max(0, min(100, mv))
+                    self.bot.state_cache.update("battery", pct)
+                    
+            # Query Radio Stats (noise floor, airtime)
+            radio_res = await self.mc.commands.get_stats_radio()
+            if radio_res.type != EventType.ERROR and isinstance(radio_res.payload, dict):
+                payload = radio_res.payload
+                if "noise_floor" in payload:
+                    self.bot.state_cache.update("noise_floor", payload["noise_floor"])
+                    
+            logger.info("Node telemetry successfully synchronized.")
+        except Exception as e:
+            logger.error(f"Error synchronizing node telemetry: {e}", exc_info=True)

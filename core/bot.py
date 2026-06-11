@@ -227,6 +227,9 @@ class MeshBot:
         sync_cron = self.config.get("core", {}).get("timeSyncInterval", "0 0 * * *")
         self.scheduler.schedule(sync_cron, self.connection_manager.sync_time, name="core_time_sync")
 
+        # Schedule periodic telemetry synchronization (every 5 minutes)
+        self.scheduler.schedule("*/5 * * * *", self.connection_manager.sync_telemetry, name="core_telemetry_sync")
+
         logger.info("MeshCore-bot started successfully and running modules.")
         
         # Wait until shutdown event is set (by signal handler or connect failure)

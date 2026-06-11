@@ -10,6 +10,12 @@ class StateCache:
             "uptime": None,
             "fwVersion": None,
             "model": None,
+            "radio_freq": None,
+            "radio_bw": None,
+            "radio_sf": None,
+            "noise_floor": None,
+            "deviceName": None,
+            "publicKey": None,
             "lastUpdated": None,
             "connectionStatus": "disconnected",
             "timeSynced": False,
@@ -45,6 +51,23 @@ class StateCache:
             self._state["fwVersion"] = telemetry["fw_ver"]
         elif "fw ver" in telemetry:
             self._state["fwVersion"] = telemetry["fw ver"]
+
+        # Parse radio settings
+        if "radio_freq" in telemetry:
+            self._state["radio_freq"] = telemetry["radio_freq"]
+        if "radio_bw" in telemetry:
+            self._state["radio_bw"] = telemetry["radio_bw"]
+        if "radio_sf" in telemetry:
+            self._state["radio_sf"] = telemetry["radio_sf"]
+
+        # Parse device name and public key
+        if "name" in telemetry:
+            self._state["deviceName"] = telemetry["name"]
+        if "public_key" in telemetry:
+            pubkey = telemetry["public_key"]
+            if isinstance(pubkey, bytes):
+                pubkey = pubkey.hex()
+            self._state["publicKey"] = pubkey
 
         self._state["lastUpdated"] = datetime.utcnow().isoformat() + "Z"
 
