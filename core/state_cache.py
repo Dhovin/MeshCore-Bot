@@ -13,6 +13,7 @@ class StateCache:
             "radio_freq": None,
             "radio_bw": None,
             "radio_sf": None,
+            "radio_cr": None,
             "noise_floor": None,
             "deviceName": None,
             "publicKey": None,
@@ -59,6 +60,8 @@ class StateCache:
             self._state["radio_bw"] = telemetry["radio_bw"]
         if "radio_sf" in telemetry:
             self._state["radio_sf"] = telemetry["radio_sf"]
+        if "radio_cr" in telemetry:
+            self._state["radio_cr"] = telemetry["radio_cr"]
 
         # Parse device name and public key
         if "name" in telemetry:

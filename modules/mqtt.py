@@ -1048,17 +1048,8 @@ class Mqtt:
         # Gather battery, neighbors, uptime details from cache
         state = self.api.get_state()
         
-        radio_parts = []
         freq = state.get("radio_freq")
-        if freq is not None:
-            radio_parts.append(f"{freq}MHz")
-        bw = state.get("radio_bw")
-        if bw is not None:
-            radio_parts.append(f"BW{bw}")
-        sf = state.get("radio_sf")
-        if sf is not None:
-            radio_parts.append(f"SF{sf}")
-        radio_str = " ".join(radio_parts) if radio_parts else "unknown"
+        radio_val = str(freq) if freq is not None else "unknown"
         
         status_payload = {
             "status": "online",
@@ -1069,8 +1060,11 @@ class Mqtt:
             "model": state.get("model", "unknown"),
             "battery": state.get("battery") if state.get("battery") is not None else 100,
             "neighbors": state.get("neighborCount", 0),
-            "client": "MeshCore-bot",
-            "radio": radio_str,
+            "client": "meshcore-bot",
+            "radio": radio_val,
+            "sf": state.get("radio_sf"),
+            "bw": state.get("radio_bw"),
+            "cr": state.get("radio_cr"),
             "uptime": state.get("uptime"),
             "noise_floor": state.get("noise_floor")
         }
