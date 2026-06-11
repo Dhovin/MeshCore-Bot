@@ -50,6 +50,7 @@ class Scheduler:
         self.tasks = []
         self._task_loop_handle = None
         self.is_running = False
+        self.timezone = None
 
     def start(self):
         """
@@ -96,9 +97,10 @@ class Scheduler:
 
         def match(date):
             from zoneinfo import ZoneInfo
-            if timezone:
+            tz_to_use = timezone or getattr(self, "timezone", None)
+            if tz_to_use:
                 try:
-                    tz = ZoneInfo(timezone) if isinstance(timezone, str) else timezone
+                    tz = ZoneInfo(tz_to_use) if isinstance(tz_to_use, str) else tz_to_use
                     # Convert naive date (system time) to system timezone-aware, then convert to target tz
                     if date.tzinfo is None:
                         system_now_aware = date.astimezone()
@@ -106,7 +108,7 @@ class Scheduler:
                     else:
                         local_date = date.astimezone(tz)
                 except Exception as e:
-                    logger.error(f"Failed to convert date to timezone '{timezone}': {e}")
+                    logger.error(f"Failed to convert date to timezone '{tz_to_use}': {e}")
                     local_date = date
             else:
                 local_date = date
@@ -172,10 +174,11 @@ class Scheduler:
                 target_tz_str = "System Default"
                 local_time_str = system_time_str
                 
-                if task.get("timezone"):
+                tz_to_use = task.get("timezone") or getattr(self, "timezone", None)
+                if tz_to_use:
                     from zoneinfo import ZoneInfo
                     try:
-                        tz = ZoneInfo(task["timezone"]) if isinstance(task["timezone"], str) else task["timezone"]
+                        tz = ZoneInfo(tz_to_use) if isinstance(tz_to_use, str) else tz_to_use
                         target_tz_str = str(tz)
                         local_time_str = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
                     except Exception:
