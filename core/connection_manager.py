@@ -1203,6 +1203,8 @@ class ConnectionManager:
         # Update cache
         self.bot.state_cache.update("connectionStatus", "connected")
         self.bot.state_cache.update_from_telemetry(res.payload)
+        if self.mc.self_info:
+            self.bot.state_cache.update_from_telemetry(self.mc.self_info)
 
         logger.info(f"Handshake complete. Connected to node: {self.mc.self_info.get('name', 'Unknown')}")
         self.bot.event_bus.publish("connect", res.payload)
